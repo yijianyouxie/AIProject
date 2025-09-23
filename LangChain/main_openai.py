@@ -3,7 +3,7 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 
 # 设置API秘钥
-os.environ["OPENAI_API_KEY"] = "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"
+os.environ["OPENAI_API_KEY"] = ""
 
 # 初始化模型
 llm = ChatOpenAI(
