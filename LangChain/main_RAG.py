@@ -10,6 +10,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 import torch
 import os
 import re
+from langchain_core.callbacks import StdOutCallbackHandler
 
 def setup_qa_system(file_path, model_path, embedding_model_path):
     """设置基于本地pytorch的知识问答系统"""
@@ -71,22 +72,22 @@ def setup_qa_system(file_path, model_path, embedding_model_path):
         persist_directory="./local_chroma_db"
     )
     # 测试检索功能
-    def test_retrieval(vectorstore, question):
-        print(f"\n====测试检索: '{question}' ====")
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-        docs = retriever.get_relevant_documents(question)
-        for i, doc in enumerate(docs):
-            print(f"结果 {i+1}: {doc.page_content[:300]}...")
-        return docs
-    
-    test_questions = ["近期重要事件", "C轮融资", "云计算平台"]
-    for q in test_questions:
-        test_retrieval(vectorstore, q)
+    # def test_retrieval(vectorstore, question):
+    #     print(f"\n====测试检索: '{question}' ====")
+    #     retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+    #     docs = retriever.get_relevant_documents(question)
+    #     for i, doc in enumerate(docs):
+    #         print(f"结果 {i+1}: {doc.page_content[:300]}...")
+    #     return docs    
+    # test_questions = ["近期重要事件", "C轮融资", "云计算平台"]
+    # for q in test_questions:
+    #     test_retrieval(vectorstore, q)
 
     # 5,加载本地pytorch语言模型到GPU
     print("====正在加载语言模型。")
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"GPU可用：{torch.cuda.get_device_name(0)}" if device == "cuda" else "GPU不可用，将使用CPU")
+    # 分词器
     tokenizer = AutoTokenizer.from_pretrained(
         model_path
     )
@@ -102,7 +103,7 @@ def setup_qa_system(file_path, model_path, embedding_model_path):
         dtype = torch.float16,
         device_map=device,
         max_new_tokens=512,# 最大生成token数
-        temperature=0.1,# 较低的温度使输出更确定性
+        temperature=0.6,# 较低的温度使输出更确定性
         top_p = 0.9,# 核采样参数
         repetition_penalty=1.3,
         do_sample=False,# False:贪婪解码，更确定但可能更保守;True:随机采样，更有创造性但可能偏离主题
@@ -131,6 +132,7 @@ def setup_qa_system(file_path, model_path, embedding_model_path):
 2. 绝对禁止使用任何外部知识、常识或个人观点
 3. 如果上下文没有提供答案，必须回答："文档中未包含此信息"
 4. 不要解释，不要添加额外信息
+5. 回答要简洁
 
 上下文信息：
 {context}
@@ -145,53 +147,98 @@ def setup_qa_system(file_path, model_path, embedding_model_path):
         input_variables=["context", "question"]
     )
 
+    # 修改检索器设置，使用相似度分数阈值
+    retriever = vectorstore.as_retriever(
+        # search_type="similarity_score_threshold",
+        # search_kwargs={"k": 5, "score_threshold": 0.1}  # 返回分数高于0.5的文档
+        search_type="similarity",
+        search_kwargs={"k": 3}
+    )
     # 7,创建检索型问答链
     qa_chain = RetrievalQA.from_chain_type(
         llm = llm,
         chain_type="stuff",
-        retriever=vectorstore.as_retriever(
-            search_type="mmr",# 使用最大边际相关性，提高多样性
-            search_kwargs={
-                "k":5,# 增加检索数量
-                "fetch_k":10,# 增加候选集大小
-                "lambda_mult":0.7# 平衡相关性和多样性
-                }), # 减少检索数量
+        retriever = retriever,
+        # retriever=vectorstore.as_retriever(
+        #     search_type="mmr",# 使用最大边际相关性，提高多样性
+        #     search_kwargs={
+        #         "k":5,# 增加检索数量
+        #         "fetch_k":10,# 增加候选集大小
+        #         "lambda_mult":0.7# 平衡相关性和多样性
+        #         }), # 减少检索数量
         chain_type_kwargs={"prompt":PROMPT},
         return_source_documents = True
     )
 
-    return qa_chain
+    return qa_chain, vectorstore
 
-def ask_question(qa_system, question):
+def ask_question(qa_system, vectorstore, question):
     """提问函数"""
     print(f"\n提问问题：{question}")
     print(f"正在思考")
     try:
-        # 先单独测试检索器
-        retriever = qa_system.retriever
-        retrieved_docs = retriever.get_relevant_documents(question)
+        # # 先使用相似度搜索获取文档和分数（用于显示，不用于QA）
+        # docs_with_scores = vectorstore.similarity_search_with_score(question, k=5)
         
-        print("====检索到的文档（检索器测试）====")
-        for i, doc in enumerate(retrieved_docs):
-            print(f"文档 {i+1} (相似度: 未知):")
-            print(f"内容: {doc.page_content[:300]}...")
-            print("---")
-
-        result = qa_system({"query":question})
+        # print("====直接向量库检索结果====")
+        # scored_docs = []
+        # for i, (doc, score) in enumerate(docs_with_scores):
+        #     print(f"文档 {i+1} (相似度: {score:.4f}):")
+        #     print(f"内容: {doc.page_content[:150]}...")
+        #     print("---")
+        #     scored_docs.append((doc, score))
+        
+        # # 按分数排序
+        # scored_docs.sort(key=lambda x: x[1], reverse=True)
+        
+        # # 去重 - 基于内容去重
+        # unique_docs = []
+        # seen_contents = set()
+        # for doc, score in scored_docs:
+        #     # 使用前200字符的哈希值进行去重
+        #     content_preview = doc.page_content[:200]
+        #     content_hash = hash(content_preview)
+        #     if content_hash not in seen_contents:
+        #         unique_docs.append((doc, score))
+        #         seen_contents.add(content_hash)
+        
+        # print(f"====去重后保留 {len(unique_docs)} 个文档====")
+        
+        # # 测试RetrievalQA链内部的检索器
+        # print("====测试RetrievalQA链内部检索器====")
+        # try:
+        #     # 使用RetrievalQA链内部的检索器
+        #     qa_retriever = qa_system.retriever
+        #     qa_docs = qa_retriever.get_relevant_documents(question)
+        #     print(f"QA链检索器返回了 {len(qa_docs)} 个文档")
+        #     for i, doc in enumerate(qa_docs):
+        #         print(f"QA文档 {i+1}\n: {doc.page_content[:100]}...")
+        # except Exception as e:
+        #     print(f"QA链检索器测试失败: {e}")
+        
+        # 使用QA系统获取答案
+        result = qa_system.invoke({"query": question})
         answer = result["result"]
         source_docs = result["source_documents"]
 
-        print(f"=====================答案=====================\n：{answer}")
+        print(f"=====================答案=====================")
+        print(f"：{answer}")
+        
         # 显示来源文档
         if source_docs:
-            print("\n====打印答案来源")
+            print("\n====打印答案来源====")
             for i, doc in enumerate(source_docs):
                 source = doc.metadata.get('source', '未知文档')
-                page = doc.metadata.get('page', '未知页码')
-                print(f"{i + 1}. {source} 第{page}页")
-                # 显示部分预览内容
-                content_preview = doc.page_content[:300] + "..." if len(doc.page_content) > 300 else doc.page_content
-                print(f"    内容：{content_preview}")
+                page_info = doc.metadata.get('page', '未知页码')
+                score = doc.metadata.get('score', '未知分数')
+                if page_info != '未知页码':
+                    page_info = f"第{page_info}页"
+                else:
+                    page_info = "未知页码"
+                
+                print(f"来源{i + 1}. {source} {page_info}")
+                content_preview = doc.page_content[:100] + "..." if len(doc.page_content) > 100 else doc.page_content
+                print(f"    内容"+"="*50 + f"\n：{content_preview}")
     except Exception as e:
         print(f"提问问题时出错：{e}")
 
@@ -199,11 +246,13 @@ def main():
     """主函数"""
     # 设置路径
     file_path = r"G:\AI\AIProject\LangChain\testLangchain.md"
-    model_path = r"G:\AIModels\modelscope_cache\models\Qwen\Qwen1___5-1___8B-Chat"
+    # model_path = r"G:\AIModels\modelscope_cache\models\Qwen\Qwen1___5-1___8B-Chat"
+    # model_path = r"G:\AIModels\modelscope_cache\models\LLM-Research\Llama-3___2-3B"
+    model_path = r"G:\AIModels\modelscope_cache\models\Qwen\Qwen3-4B-Instruct-2507"
     embedding_model_path = r"G:\AIModels\modelscope_cache\models\sentence-transformers\all-MiniLM-L6-v2"
     try:
         print("====正在初始化文档问答系统")
-        qa_system = setup_qa_system(file_path, model_path, embedding_model_path)
+        qa_system, vectorstore = setup_qa_system(file_path, model_path, embedding_model_path)
         print("====文档问答系统初始化完成")
         example_questions = [
             "文档的主要主题是什么？",
@@ -223,7 +272,7 @@ def main():
                 print("感谢使用，再见！")
                 break
             if question:
-                ask_question(qa_system, question)
+                ask_question(qa_system, vectorstore, question)
     except Exception as e:
         print(f"系统初始化失败：{e}")
         print("请检查：1)文件路径，模型路径是否正确；2)GPU空间是否足够")
