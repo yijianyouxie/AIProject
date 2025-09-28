@@ -30,7 +30,7 @@ def setup_language_model(model_path):
         temperature = 0.6,
         top_p = 0.9,# 核采样参数 top_p 就像是一个“智能过滤器”，它确保模型只在那些“总体上看起来合理”的选项中进行随机选择，从而巧妙地平衡了生成的准确性和趣味性
         repetition_penalty=1.3,
-        do_sample=False,# False:贪婪解码，更确定但可能更保守;True:随机采样，更有创造性但可能偏离主题
+        do_sample=True,# False:贪婪解码，更确定但可能更保守;True:随机采样，更有创造性但可能偏离主题
         return_full_text=False,
         # return_full_text=True,# 要是改成True会提示模版的内容也输出出来还是保持False
     )
@@ -65,8 +65,27 @@ def create_qa_chain(llm, vectorstore):
                                 请仔细检查上下文是否包含问题答案。如果包含，请直接引用上下文内容回答；如果不包含，请明确说明"文档中未包含此信息"。
 
                                 基于文档的回答："""
+    strict_prompt_template2 = """<|im_start|>system
+                                你是一个严格的文档问答系统。请遵守以下规则：
+
+                                规则：
+                                1. 你只能使用下面提供的上下文信息来回答问题
+                                2. 绝对禁止使用任何外部知识、常识或个人观点
+                                3. 如果上下文没有提供答案，必须回答："文档中未包含此信息"
+                                4. 不要解释，不要添加额外信息
+                                5. 回答要简洁<|im_end|>
+                                <|im_start|>user
+                                上下文信息：
+                                {context}
+
+                                问题：{question}
+
+                                请仔细检查上下文是否包含问题答案。如果包含，请直接引用上下文内容回答；如果不包含，请明确说明"文档中未包含此信息"。
+                                <|im_end|>
+                                <|im_start|>assistant
+                                基于文档的回答："""
     PROMPT = PromptTemplate(
-        template=strict_prompt_template,
+        template=strict_prompt_template2,
         input_variables=["context","question"]
     )
     # 创建检索
