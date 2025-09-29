@@ -3,6 +3,6 @@
   "document_paths": [
     "G:\\AI\\AIProject\\LangChain\\documents_RAG\\testLangchain.md"
   ],
-  "created_time": "2025-09-26T17:45:26.489701",
+  "created_time": "2025-09-29T11:59:16.903555",
   "embedding_model": "sentence-transformer/all-MiniLM-L6-v2"
 }

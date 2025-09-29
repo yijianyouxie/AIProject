@@ -151,12 +151,13 @@ def setup_vector_store(input_path, embedding_model_path, vectorstore_path = "./l
         print(f"需要重新创建向量存储数据：{reason}")
         documents, document_paths = load_documents_from_path(input_path)
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=600,
-            chunk_overlap = 100,
+            chunk_size=300,
+            chunk_overlap = 50,
             length_function=len,
             separators=["\n# ", "\n## ", "\n### ", "\n#### ", "\n- ", "\n", "。", "！", "？", "；", "，", " ", ""]
         )
         texts = text_splitter.split_documents(documents)
+        print(f"====文档已分割为{len(texts)}个文本块====")
         debug_write_chunks_to_file(texts, "text_chunks_debug.txt")
         embeddings = HuggingFaceEmbeddings(
             model_name = embedding_model_path,
@@ -166,7 +167,8 @@ def setup_vector_store(input_path, embedding_model_path, vectorstore_path = "./l
         vectorstore = Chroma.from_documents(
             documents=texts,
             embedding=embeddings,
-            persist_directory=vectorstore_path
+            persist_directory=vectorstore_path,
+            collection_metadata={"hnsw:space": "cosine"}  # 显式指定余弦相似度 这里可以将分数归一到0-1
         )
         # 保存元数据
         save_vectorstore_metadata(vectorstore_path, document_hash, document_paths)
@@ -180,7 +182,28 @@ def setup_vector_store(input_path, embedding_model_path, vectorstore_path = "./l
         )
         vectorstore = Chroma(
             persist_directory=vectorstore_path,
-            embedding_function=embeddings
+            embedding_function=embeddings,
+            collection_metadata={"hnsw:space": "cosine"}  # 显式指定余弦相似度
         )
         print("====向量存储加载完成====")
     return vectorstore, document_hash
+
+# 在 vector_store_manager.py 中添加向量存储验证
+def validate_vector_store(vectorstore, test_questions):
+    """验证向量存储的质量"""
+    print("\n====验证向量存储质量====")
+    
+    for question in test_questions:
+        print(f"\n测试问题: '{question}'")
+        
+        # 相似度搜索
+        docs = vectorstore.similarity_search(question, k=2)
+        for i, doc in enumerate(docs):
+            relevance = "✓" if any(keyword in doc.page_content for keyword in question) else "✗"
+            print(f"  结果 {i+1} {relevance}: {doc.page_content[:80]}...")
+    
+    # 检查向量存储中的文档数量
+    collection = vectorstore._collection
+    if hasattr(collection, 'count'):
+        count = collection.count()
+        print(f"\n向量存储中的文档数量: {count}")
