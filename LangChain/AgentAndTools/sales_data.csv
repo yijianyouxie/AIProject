@@ -1,0 +1,11 @@
+date,product,category,sales,region
+2024-01-01,Product A,Electronics,1500,North
+2024-01-01,Product B,Clothing,800,South
+2024-01-02,Product A,Electronics,1200,North
+2024-01-02,Product C,Home,600,East
+2024-01-03,Product B,Clothing,900,South
+2024-01-03,Product D,Electronics,2000,West
+2024-01-04,Product C,Home,750,East
+2024-01-04,Product A,Electronics,1800,North
+2024-01-05,Product E,Clothing,550,South
+2024-01-05,Product D,Electronics,2200,West
